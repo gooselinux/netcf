@@ -1,0 +1,26 @@
+ netcf-0.1.6-handle-quoted-entries.patch, intended to fix rhbz#613886,
+modified Makefile.am to install the newly added file
+/usr/share/netcf/data/lenses/sysconfig.aug. This didn't work for RHEL.
+
+The problem is that on an upstream build autogen gets run, which
+creates Makefile.in, which is then used by configure to generate
+Makefile. On a RHEL build, autogen is not called, so changes to
+Makefile.am don't show up in Makefile; instead we must modify
+Makefile.in by hand. This patch simply replicates the Makefile.am
+change in Makefile.in.
+
+Since this is not necessary upstream, there is no upstream equivalent
+patch to reference.
+---
+diff -rupN netcf-0.1.6/Makefile.in netcf-0.1.6-new/Makefile.in
+--- netcf-0.1.6/Makefile.in	2010-04-15 15:35:20.000000000 -0400
++++ netcf-0.1.6-new/Makefile.in	2010-07-23 12:28:42.609462568 -0400
+@@ -457,7 +457,7 @@ dist_xml_DATA = data/xml/augeas.rng data
+ 	data/xml/initscripts-get.xsl data/xml/initscripts-put.xsl
+ 
+ dist_netcf_DATA = data/iptables-forward-bridged
+-dist_lens_DATA = data/lenses/netcf.aug
++dist_lens_DATA = data/lenses/netcf.aug data/lenses/sysconfig.aug
+ all: config.h
+ 	$(MAKE) $(AM_MAKEFLAGS) all-recursive
+ 

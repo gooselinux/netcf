@@ -1,0 +1,264 @@
+From 94f5c6b4eabe88fc76b0c4132cfbe984011a76e0 Mon Sep 17 00:00:00 2001
+From: David Lutterkort <lutter@redhat.com>
+Date: Mon, 19 Jul 2010 13:07:10 -0700
+Subject: [PATCH] Properly handle quoted entries in sysconfig files
+
+The Augeas lens we used (Shellvars), maps an entry like
+
+  DEVICE="eth0"
+
+into the tree including quotes. That leads to problems down the road, since
+the quotes become part of the interface name.
+
+To address that, we use a lens (Sysconfig) that is more geared towards the
+subset of shell syntax used in sysconfig files. It strips quotes when
+reading files and adds and restores them as needed.
+
+  * data/lenses/sysconfig.aug: lens for sysconfig files that strips
+      quotes from values
+  * data/lenses/tests/test_sysconfig.aug: tests for Sysconfig lens,
+      especially for handling all the corner cases with quoted strings
+  * src/drv_initscripts.c (augeas_xfm_common_pv): use Sysconfig lens,
+      not Shellvars lens
+  * Makefile.am: install Sysconfig lens
+  * tests/root/etc/sysconfig/network-scripts/ifcfg-br0: add unnecessary
+      quotes
+
+Fixes BZ 613886
+---
+ Makefile.am                                        |    2 +-
+ data/lenses/sysconfig.aug                          |   60 +++++++++++
+ data/lenses/tests/test_sysconfig.aug               |  110 ++++++++++++++++++++
+ src/drv_initscripts.c                              |    2 +-
+ tests/root/etc/sysconfig/network-scripts/ifcfg-br0 |   11 +-
+ 5 files changed, 178 insertions(+), 7 deletions(-)
+ create mode 100644 data/lenses/sysconfig.aug
+ create mode 100644 data/lenses/tests/test_sysconfig.aug
+
+diff --git a/Makefile.am b/Makefile.am
+index d61a752..416a9ad 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -15,7 +15,7 @@ dist_xml_DATA=data/xml/augeas.rng data/xml/interface.rng \
+ 	data/xml/util-get.xsl data/xml/util-put.xsl \
+ 	data/xml/initscripts-get.xsl data/xml/initscripts-put.xsl
+ dist_netcf_DATA=data/iptables-forward-bridged
+-dist_lens_DATA=data/lenses/netcf.aug
++dist_lens_DATA=data/lenses/netcf.aug data/lenses/sysconfig.aug
+ 
+ # This requires that trang is installed, but we don't want to require
+ # that, even for building, since the .rnc files are only a convenience
+diff --git a/data/lenses/sysconfig.aug b/data/lenses/sysconfig.aug
+new file mode 100644
+index 0000000..9ee668e
+--- /dev/null
++++ b/data/lenses/sysconfig.aug
+@@ -0,0 +1,60 @@
++(* Variation of the Shellvars lens                                     *)
++(* Supports only what's needed to handle sysconfig files               *)
++(* Modified to strip quotes. In the put direction, add double quotes   *)
++(* around values that need them                                        *)
++(* To keep things simple, we also do not support shell variable arrays *)
++module Sysconfig =
++  let eol = Util.eol
++
++  let key_re = /[A-Za-z0-9_]+(\[[0-9]+\])?/ - "unset" - "export"
++  let eq = Util.del_str "="
++  let comment = Util.comment
++  let empty   = Util.empty
++  let xchgs   = Build.xchgs
++  let dels    = Util.del_str
++
++  let nothing = del /(""|'')?/ "" . value ""
++
++  (* Chars allowed in a bare string *)
++  let bchar = /[^ \t\n\"'\\]|\\\\./
++  let qchar = /["']/  (* " *)
++
++  (* We split the handling of right hand sides into a few cases:
++   *   bare  - strings that contain no spaces, optionally enclosed in
++   *           single or double quotes
++   *   dquot - strings that contain at least one space or apostrophe,
++   *           which must be enclosed in double quotes
++   *   squot - strings that contain an unescaped double quote
++   *)
++  let bare = del qchar? "" . store (bchar+) . del qchar? ""
++  let dquot =
++    del qchar "\"" . store (bchar* . /[ \t']/ . bchar*)+ . del qchar "\""
++  let squot =
++    dels "'" . store ((bchar|/[ \t]/)* . "\"" . (bchar|/[ \t]/)*)+ . dels "'"
++
++  let export = [ key "export" . Util.del_ws_spc ]
++  let kv (value:lens) = [ export? . key key_re . eq . value . eol ]
++  let assign = kv nothing | kv bare | kv dquot | kv squot
++
++  let var_action (name:string) =
++    [ xchgs name ("@" . name) . Util.del_ws_spc . store key_re . eol ]
++
++  let unset = var_action "unset"
++  let bare_export = var_action "export"
++
++  let source =
++    [
++      del /\.|source/ "." . label ".source" .
++      Util.del_ws_spc . store /[^= \t\n]+/ . eol
++    ]
++
++  let lns = (comment | empty | source | assign | unset | bare_export) *
++
++(*
++  Examples:
++
++  abc   -> abc -> abc
++  "abc" -> abc -> abc
++  "a b" -> a b -> "a b"
++  'a"b' -> a"b -> 'a"b'
++*)
+diff --git a/data/lenses/tests/test_sysconfig.aug b/data/lenses/tests/test_sysconfig.aug
+new file mode 100644
+index 0000000..ef8abd4
+--- /dev/null
++++ b/data/lenses/tests/test_sysconfig.aug
+@@ -0,0 +1,110 @@
++(* Test for sysconfig lens *)
++module Test_sysconfig =
++
++  let eth_static = "# Intel Corporation PRO/100 VE Network Connection
++DEVICE=eth0
++BOOTPROTO=static
++BROADCAST=172.31.0.255
++HWADDR=ab:cd:ef:12:34:56
++export IPADDR=172.31.0.31
++#DHCP_HOSTNAME=host.example.com
++NETMASK=255.255.255.0
++NETWORK=172.31.0.0
++unset ONBOOT
++"
++  let empty_val = "EMPTY=\nDEVICE=eth0\n"
++
++  let key_brack = "SOME_KEY[1]=\nDEVICE=eth0\n"
++
++  test Sysconfig.lns get eth_static =
++    { "#comment" = "Intel Corporation PRO/100 VE Network Connection" }
++    { "DEVICE" = "eth0" }
++    { "BOOTPROTO" = "static" }
++    { "BROADCAST" = "172.31.0.255" }
++    { "HWADDR" = "ab:cd:ef:12:34:56" }
++    { "IPADDR" = "172.31.0.31"
++        { "export" } }
++    { "#comment" = "DHCP_HOSTNAME=host.example.com" }
++    { "NETMASK" = "255.255.255.0" }
++    { "NETWORK" = "172.31.0.0" }
++    { "@unset"   = "ONBOOT" }
++
++  test Sysconfig.lns put eth_static after
++      set "BOOTPROTO" "dhcp" ;
++      rm "IPADDR" ;
++      rm "BROADCAST" ;
++      rm "NETMASK" ;
++      rm "NETWORK"
++  = "# Intel Corporation PRO/100 VE Network Connection
++DEVICE=eth0
++BOOTPROTO=dhcp
++HWADDR=ab:cd:ef:12:34:56
++#DHCP_HOSTNAME=host.example.com
++unset ONBOOT
++"
++  test Sysconfig.lns get empty_val =
++    { "EMPTY" = "" } { "DEVICE" = "eth0" }
++
++  test Sysconfig.lns get key_brack =
++    { "SOME_KEY[1]" = "" } { "DEVICE" = "eth0" }
++
++  test Sysconfig.lns get "smartd_opts=\"-q never\"\n" =
++    { "smartd_opts" = "-q never" }
++
++  test Sysconfig.lns get "var=val  \n" = { "var" = "val" }
++
++  test Sysconfig.lns get ". /etc/java/java.conf\n" =
++    { ".source" = "/etc/java/java.conf" }
++
++  (* Quoted strings and other oddities *)
++  test Sysconfig.lns get "var=\"foo 'bar'\"\n" =
++    { "var" = "foo 'bar'" }
++
++  test Sysconfig.lns get "var=\"eth0\"\n" =
++    { "var" = "eth0" }
++
++  test Sysconfig.lns get "var='eth0'\n" =
++    { "var" = "eth0" }
++
++  test Sysconfig.lns get "var='Some \"funny\" value'\n" =
++    { "var" = "Some \"funny\" value" }
++
++  test Sysconfig.lns get "var=\"\\\"\"\n" =
++    { "var" = "\\\"" }
++
++  test Sysconfig.lns get "var=\\\"\n" =
++    { "var" = "\\\"" }
++
++  test Sysconfig.lns get "var=ab#c\n" =
++    { "var" = "ab#c" }
++
++  (* We don't handle backticks *)
++  test Sysconfig.lns get
++      "var=`grep nameserver /etc/resolv.conf | head -1`\n" = *
++
++  (* We don't handle comments at the end of a line yet *)
++  test Sysconfig.lns get "var=ab #c\n" = *
++
++  (* Bug 109: allow a bare export *)
++  test Sysconfig.lns get "export FOO\n" =
++  { "@export" = "FOO" }
++
++  (* Check we put quotes in when changes require them *)
++  test Sysconfig.lns put "var=\"v\"\n" after rm "/foo" =
++    "var=\"v\"\n"
++
++  test Sysconfig.lns put "var=v\n" after set "/var" "v w"=
++    "var=\"v w\"\n"
++
++  test Sysconfig.lns put "var='v'\n" after set "/var" "v w"=
++    "var='v w'\n"
++
++  test Sysconfig.lns put "var=v\n" after set "/var" "v'w"=
++    "var=\"v'w\"\n"
++
++  test Sysconfig.lns put "var=v\n" after set "/var" "v\"w"=
++    "var='v\"w'\n"
++
++(* Local Variables: *)
++(* mode: caml       *)
++(* End:             *)
+diff --git a/src/drv_initscripts.c b/src/drv_initscripts.c
+index 6a1453a..d5bbd44 100644
+--- a/src/drv_initscripts.c
++++ b/src/drv_initscripts.c
+@@ -56,7 +56,7 @@ static const char *const ifcfg_path =
+ /* Augeas should only load the files we are interested in */
+ static const struct augeas_pv augeas_xfm_common_pv[] = {
+     /* Ifcfg files */
+-    { "/augeas/load/Ifcfg/lens", "Shellvars.lns" },
++    { "/augeas/load/Ifcfg/lens", "Sysconfig.lns" },
+     { "/augeas/load/Ifcfg/incl",
+       "/etc/sysconfig/network-scripts/ifcfg-*" },
+     { "/augeas/load/Ifcfg/excl[1]", "*~" },
+diff --git a/tests/root/etc/sysconfig/network-scripts/ifcfg-br0 b/tests/root/etc/sysconfig/network-scripts/ifcfg-br0
+index 37bfe89..d4bbc65 100644
+--- a/tests/root/etc/sysconfig/network-scripts/ifcfg-br0
++++ b/tests/root/etc/sysconfig/network-scripts/ifcfg-br0
+@@ -1,5 +1,6 @@
+-DEVICE=br0
+-ONBOOT=yes
+-BOOTPROTO=dhcp
+-TYPE=Bridge
+-DELAY=0
++# Enclosing the values in useless quotes is intentional
++DEVICE="br0"
++ONBOOT='yes'
++BOOTPROTO="dhcp"
++TYPE="Bridge"
++DELAY='0'
+-- 
+1.7.1.1
+

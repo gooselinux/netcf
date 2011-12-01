@@ -1,0 +1,177 @@
+From 6d760fe7119e17965ed5bcfaba3be10cb2f78b22 Mon Sep 17 00:00:00 2001
+From: Cole Robinson <crobinso@redhat.com>
+Date: Mon, 14 Jun 2010 17:25:30 -0400
+Subject: [PATCH 1/2] rng: bond: Make miimon/arpmon optional
+
+Initscripts have defaults for these values, so if mii or arp isn't
+explicitly specified, just defer to system defaults.
+
+Add test files for implicit bonding defaults.
+
+Caveat: I haven't actually tested that this works since I have never really
+dealt with bonding.
+
+Signed-off-by: Cole Robinson <crobinso@redhat.com>
+---
+ data/xml/interface.rng              |   77 ++++++++++++++++++-----------------
+ tests/initscripts/bond-defaults.xml |   28 +++++++++++++
+ tests/interface/bond-defaults.xml   |   11 +++++
+ tests/test-initscripts.c            |    1 +
+ 4 files changed, 80 insertions(+), 37 deletions(-)
+ create mode 100644 tests/initscripts/bond-defaults.xml
+ create mode 100644 tests/interface/bond-defaults.xml
+
+diff --git a/data/xml/interface.rng b/data/xml/interface.rng
+index a0df9ba..80d686e 100644
+--- a/data/xml/interface.rng
++++ b/data/xml/interface.rng
+@@ -177,43 +177,46 @@
+              xmit_hash_policy       (since 2.6.3/3.2.2)
+       -->
+ 
+-      <choice>
+-        <element name="miimon">
+-          <!-- miimon frequency in ms -->
+-          <attribute name="freq"><ref name="uint"/></attribute>
+-          <optional>
+-            <attribute name="downdelay"><ref name="uint"/></attribute>
+-          </optional>
+-          <optional>
+-            <attribute name="updelay"><ref name="uint"/></attribute>
+-          </optional>
+-          <optional>
+-            <!-- use_carrier -->
+-            <attribute name="carrier">
+-              <choice>
+-                <!-- use MII/ETHTOOL ioctl -->
+-                <value>ioctl</value>
+-                <!-- use netif_carrier_ok() -->
+-                <value>netif</value>
+-              </choice>
+-            </attribute>
+-          </optional>
+-        </element>
+-        <element name="arpmon">
+-          <attribute name="interval"><ref name="uint"/></attribute>
+-          <attribute name="target"><ref name="ipv4-addr"/></attribute>
+-          <optional>
+-            <attribute name="validate">
+-              <choice>
+-                <value>none</value>
+-                <value>active</value>
+-                <value>backup</value>
+-                <value>all</value>
+-              </choice>
+-            </attribute>
+-          </optional>
+-        </element>
+-      </choice>
++      <optional>
++        <choice>
++          <element name="miimon">
++            <!-- miimon frequency in ms -->
++            <attribute name="freq"><ref name="uint"/></attribute>
++            <optional>
++              <attribute name="downdelay"><ref name="uint"/></attribute>
++            </optional>
++            <optional>
++              <attribute name="updelay"><ref name="uint"/></attribute>
++            </optional>
++            <optional>
++              <!-- use_carrier -->
++              <attribute name="carrier">
++                <choice>
++                  <!-- use MII/ETHTOOL ioctl -->
++                  <value>ioctl</value>
++                  <!-- use netif_carrier_ok() -->
++                  <value>netif</value>
++                </choice>
++              </attribute>
++            </optional>
++          </element>
++          <element name="arpmon">
++            <attribute name="interval"><ref name="uint"/></attribute>
++            <attribute name="target"><ref name="ipv4-addr"/></attribute>
++            <optional>
++              <attribute name="validate">
++                <choice>
++                  <value>none</value>
++                  <value>active</value>
++                  <value>backup</value>
++                  <value>all</value>
++                </choice>
++              </attribute>
++            </optional>
++          </element>
++        </choice>
++      </optional>
++
+       <oneOrMore>
+         <!-- The slave interfaces -->
+         <ref name="bare-ethernet-interface"/>
+diff --git a/tests/initscripts/bond-defaults.xml b/tests/initscripts/bond-defaults.xml
+new file mode 100644
+index 0000000..3e92d19
+--- /dev/null
++++ b/tests/initscripts/bond-defaults.xml
+@@ -0,0 +1,28 @@
++<!-- A sketch of how the ethernet-static.xml example would be
++     turned into actual files.
++
++     The XML notation is close to what would turn up in a Augeas tree -->
++
++<forest>
++  <tree  path="/files/etc/sysconfig/network-scripts/ifcfg-bond0">
++    <node label="DEVICE" value="bond0"/>
++    <node label="ONBOOT" value="no"/>
++    <node label="BOOTPROTO" value="none"/>
++    <node label="IPADDR" value="192.168.50.7"/>
++    <node label="NETMASK" value="255.255.255.0"/>
++    <node label="GATEWAY" value="192.168.50.1"/>
++    <node label="BONDING_OPTS" value="''"/>
++  </tree>
++  <tree  path="/files/etc/sysconfig/network-scripts/ifcfg-eth1">
++    <node label="DEVICE" value="eth1"/>
++    <node label="ONBOOT" value="no"/>
++    <node label="MASTER" value="bond0"/>
++    <node label="SLAVE" value="yes"/>
++  </tree>
++  <tree path="/files/etc/sysconfig/network-scripts/ifcfg-eth0">
++    <node label="DEVICE" value="eth0"/>
++    <node label="ONBOOT" value="no"/>
++    <node label="MASTER" value="bond0"/>
++    <node label="SLAVE" value="yes"/>
++  </tree>
++</forest>
+diff --git a/tests/interface/bond-defaults.xml b/tests/interface/bond-defaults.xml
+new file mode 100644
+index 0000000..38224c4
+--- /dev/null
++++ b/tests/interface/bond-defaults.xml
+@@ -0,0 +1,11 @@
++<interface type="bond" name="bond0">
++  <start mode="none"/>
++  <protocol family="ipv4">
++    <ip address="192.168.50.7" prefix="24"/>
++    <route gateway="192.168.50.1"/>
++  </protocol>
++  <bond>
++    <interface type="ethernet" name="eth1"/>
++    <interface type="ethernet" name="eth0"/>
++  </bond>
++</interface>
+diff --git a/tests/test-initscripts.c b/tests/test-initscripts.c
+index 329bf19..404ec0a 100644
+--- a/tests/test-initscripts.c
++++ b/tests/test-initscripts.c
+@@ -174,6 +174,7 @@ static void assert_transforms(CuTest *tc, const char *base) {
+ static void testTransforms(CuTest *tc) {
+     assert_transforms(tc, "bond");
+     assert_transforms(tc, "bond-arp");
++    assert_transforms(tc, "bond-defaults");
+     assert_transforms(tc, "bridge");
+     assert_transforms(tc, "bridge-no-address");
+     assert_transforms(tc, "bridge-vlan");
+-- 
+1.7.1
+

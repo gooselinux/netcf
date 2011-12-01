@@ -1,0 +1,37 @@
+From e824b8031dc10691072cfb4ebd636b3ac2ca4510 Mon Sep 17 00:00:00 2001
+From: David Lutterkort <lutter@redhat.com>
+Date: Mon, 28 Jun 2010 17:11:37 -0700
+Subject: [PATCH 2/2] * src/drv_initscripts.c (bridge_physdevs): handle empty iptables file
+
+The logic for writing the content for an empty/nonexistent iptables file
+was there already, but the detection of whether we had a preexisting or
+empty iptables file was broken.
+
+Fixes BZ 582905
+---
+ src/drv_initscripts.c |    7 +++----
+ 1 files changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/src/drv_initscripts.c b/src/drv_initscripts.c
+index ceba52c..6a1453a 100644
+--- a/src/drv_initscripts.c
++++ b/src/drv_initscripts.c
+@@ -432,12 +432,11 @@ static void bridge_physdevs(struct netcf *ncf) {
+     }
+ 
+     if (! use_lokkit) {
+-        defnode(ncf, "ipt_filter", NULL, "$iptables/table[. = 'filter']");
++        int created = defnode(ncf, "ipt_filter", NULL,
++                              "$iptables/table[. = 'filter']");
+         ERR_BAIL(ncf);
+ 
+-        nmatches = aug_match(aug, "$ipt_filter", NULL);
+-        ERR_COND_BAIL(nmatches < 0, ncf, EOTHER);
+-        if (nmatches == 0) {
++        if (created) {
+             r = aug_set(aug, "$ipt_filter", "filter");
+             ERR_COND_BAIL(r < 0, ncf, EOTHER);
+             r = aug_set(aug, "$ipt_filter/chain[1]", "INPUT");
+-- 
+1.7.1
+

@@ -1,0 +1,52 @@
+From: Laine Stump <laine@redhat.com>
+To: rhvirt-patches@redhat.com
+Subject: [PATCHv2 RHEL6 netcf] Don't delete the physical interface config when
+	defining a vlan.
+Date: Tue, 27 Jul 2010 14:51:24 -0400
+Message-Id: <1280256684-11916-1-git-send-email-laine@redhat.com>
+
+This is a much simpler way of solving the problem, suggested by David
+Lutterkort.
+
+This is the fix for https://bugzilla.redhat.com/show_bug.cgi?id=585112,
+identical to the netcf upstream commit f146e9a280d0b807bf2ff6fe1603173ce59d20b1.
+
+Prior to defining a new interface, drv_define() would previously call
+rm_all_interfaces(), which would look for all nodes called "interface"
+at every level, and remove the config for any existing interface with
+the same name. This is necessary when defining a bridge or a bond
+(since those interfaces will now be slaves of the toplevel
+bridge/bond, and their config will be created anew along with the
+toplevel), but is the wrong thing to do for vlans - not only does the
+physical interface associated with a vlan have an existence of its
+own, multiple vlans can be associated with the same physical
+interface, and the act of defining a vlan *does not* re-create the
+physical interface config. The result of this was dismal failure when
+attempting to define a vlan interface - the associated physical
+interface would disappear.
+
+The solution is to beef up the expression used when finding all
+interfaces inside the XML to exclude any whose parent is a "vlan"
+node.
+---
+ src/drv_initscripts.c |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletions(-)
+
+diff --git a/src/drv_initscripts.c b/src/drv_initscripts.c
+index d5bbd44..c0bcfd5 100644
+--- a/src/drv_initscripts.c
++++ b/src/drv_initscripts.c
+@@ -949,7 +949,9 @@ static void rm_all_interfaces(struct netcf *ncf, xmlDocPtr ncf_xml) {
+ 	context = xmlXPathNewContext(ncf_xml);
+     ERR_NOMEM(context == NULL, ncf);
+ 
+-	obj = xmlXPathEvalExpression(BAD_CAST "//interface", context);
++    obj = xmlXPathEvalExpression(BAD_CAST
++                                 "//interface[count(parent::vlan) = 0]",
++                                 context);
+     ERR_NOMEM(obj == NULL, ncf);
+ 
+ 
+-- 
+1.7.1.1
+
