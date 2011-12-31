@@ -1,0 +1,62 @@
+From 8324f69272a8fca2a4caebc58ce26ad69cbb0389 Mon Sep 17 00:00:00 2001
+From: Laine Stump <laine@laine.org>
+Date: Thu, 22 Sep 2011 01:40:48 -0400
+Subject: [PATCH 2/2] Fix missing vlan/bond/ethernet info in dumpxml --live
+
+This patch addresses:
+
+  https://bugzilla.redhat.com/show_bug.cgi?id=736920
+  https://bugzilla.redhat.com/show_bug.cgi?id=739505
+
+It is a direct cherry-pick of upstream commit
+ed9614480430b687a247c0ad49ab99c808e412e7.
+
+Commit 38f44cf (pushed between 0.1.8 and 0.1.9) put a check for an
+invalid ifindex into the functions that add type-specific status data
+to the xml document (e.g. the mac address of an ethernet, or tag of a
+vlan). This check was inadvertently done incorrectly ("ifindex !=
+RTNL_LINK_NOT_FOUND" rather than "ifindex == RTNL_LINK_NOT_FOUND").
+This patch corrects that error.
+
+Because these functions are a part of the code to gather info from the
+kernel via libnl (netlink) calls, there is unfortunately no simple way
+to incorporate a build-time test to prevent similar regressions in the
+future; we will instead have to rely on separate testing.
+---
+ src/dutil_linux.c |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/dutil_linux.c b/src/dutil_linux.c
+index 75492ba..730be45 100644
+--- a/src/dutil_linux.c
++++ b/src/dutil_linux.c
+@@ -909,7 +909,7 @@ static void add_ethernet_info(struct netcf *ncf,
+     struct rtnl_link *filter_link = NULL;
+ 
+     /* if interface isn't currently available, nothing to add */
+-    if (ifindex != RTNL_LINK_NOT_FOUND)
++    if (ifindex == RTNL_LINK_NOT_FOUND)
+         return;
+ 
+     filter_link = rtnl_link_alloc();
+@@ -998,7 +998,7 @@ static void add_vlan_info(struct netcf *ncf,
+     struct rtnl_link *filter_link = NULL;
+ 
+     /* if interface isn't currently available, nothing to add */
+-    if (ifindex != RTNL_LINK_NOT_FOUND)
++    if (ifindex == RTNL_LINK_NOT_FOUND)
+         return;
+ 
+     filter_link = rtnl_link_alloc();
+@@ -1113,7 +1113,7 @@ static void add_bond_info(struct netcf *ncf,
+         = { doc, root, NULL, ifindex, ncf };
+ 
+     /* if interface isn't currently available, nothing to add */
+-    if (ifindex != RTNL_LINK_NOT_FOUND)
++    if (ifindex == RTNL_LINK_NOT_FOUND)
+         return;
+ 
+     nl_cache_foreach(ncf->driver->link_cache, add_bond_info_cb, &cb_data);
+-- 
+1.7.4.4
+

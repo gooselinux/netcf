@@ -1,12 +1,17 @@
 Name:           netcf
-Version:        0.1.6
-Release:        4%{?dist}%{?extra_release}
+Version:        0.1.9
+Release:        2%{?dist}%{?extra_release}
 Summary:        Cross-platform network configuration library
 
 Group:          System Environment/Libraries
 License:        LGPLv2+
 URL:            https://fedorahosted.org/netcf/
 Source0:        https://fedorahosted.org/released/%{name}/%{name}-%{version}.tar.gz
+
+# Patches
+Patch1: netcf-eliminate-potential-use-of-uninitialized-index.patch
+Patch2: netcf-Fix-missing-vlan-bond-ethernet-info-in-dumpxml.patch
+
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
 BuildRequires:  readline-devel augeas-devel >= 0.5.2
@@ -15,22 +20,16 @@ BuildRequires:  libnl-devel
 Requires:       %{name}-libs = %{version}-%{release}
 
 %description
-A library for modifying the network configuration of a system. Network
-configurations are expresed in a platform-independent XML format, which
-netcf translates into changes to the system's 'native' network
-configuration files.
+Netcf is a library used to modify the network configuration of a
+system. Network configurations are expressed in a platform-independent
+XML format, which netcf translates into changes to the system's
+'native' network configuration files.
 
 %package        devel
 Summary:        Development files for %{name}
 Group:          Development/Libraries
 Requires:       %{name}-libs = %{version}-%{release}
 Requires:       pkgconfig
-
-Patch01: netcf-0.1.6-bond-make-miimon-arpmon-optional.patch
-Patch02: netcf-0.1.6-empty-iptables.patch
-Patch03: netcf-0.1.6-handle-quoted-entries.patch
-Patch04: netcf-0.1.6-install-sysconfig.aug.patch
-Patch05: netcf-0.1.6-dont-delete-physical-on-vlan-define.patch
 
 %description    devel
 The %{name}-devel package contains libraries and header files for
@@ -46,11 +45,8 @@ The libraries for %{name}.
 %prep
 %setup -q
 
-%patch01 -p1
-%patch02 -p1
-%patch03 -p1
-%patch04 -p1
-%patch05 -p1
+%patch1 -p1
+%patch2 -p1
 
 %build
 %configure --disable-static
@@ -76,6 +72,7 @@ rm -rf $RPM_BUILD_ROOT
 %defattr(-,root,root,-)
 %{_datadir}/netcf
 %{_libdir}/*.so.*
+%{_sysconfdir}/rc.d/init.d/netcf-transaction
 %doc AUTHORS COPYING NEWS
 
 %files devel
@@ -86,6 +83,44 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/pkgconfig/netcf.pc
 
 %changelog
+* Mon Sep 26 2011 Laine Stump <laine@redhat.com> - 0.1.9-1
+  - resolves rhbz#728184
+  - eliminate potential use of uninitialized index/pointer in add_bridge_info
+  - resolves rhbz#736920
+  - resolves rhbz#739505
+  - fix missing vlan/bond/ethernet info in dumpxml --live
+
+* Tue Jul 26 2011 Laine Stump <laine@redhat.com> - 0.1.9-1
+  - rebase to netcf-0.1.9
+  - resolves rhbz#616060
+  - always add <bridge> element to bridge, even if there is no physdev present
+  - resolves rhbz#713180
+  - don't log error if interface isn't found in kernel during status report
+  - resolves rhbz#713286
+  - update gnulib
+
+* Mon Jun 12 2011 Laine Stump <laine@redhat.com> - 0.1.8-1
+  - rebase to netcf-0.1.8
+  - resolves rhbz#616060
+  - show ifup output in relevant error message
+  - resolves rhbz#662057
+  - pkgconfig file should not list augeas, libxml or libxslt
+  - resolves rhbz#681078
+  - Need to input 'quit' twice to quit ncftool after an erroneous command
+  - resolves rhbz#703318
+  - %desc field in specfile has a typo
+  - resolves rhbz#705061
+  - rebase netcf for RHEL6.2
+  - resolves rhbz#708476
+  - RFE: transaction-oriented API for handling host interfaces
+
+* Thu Jan 13 2011 Laine Stump <laine@redhat.com> - 0.1.7-1
+  - rebase to netcf-0.1.7
+  - Resolves: rhbz#651032
+  - remove all iptables manipulation
+  - Resolves: rhbz#633346
+  - Resolves: rhbz#629206
+
 * Tue Jul 27 2010 Laine Stump <laine@redhat.com> - 0.1.6-4
 - install missing sysconfig.aug file
 - Resolves: rhbz#613886

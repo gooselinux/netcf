@@ -1,0 +1,43 @@
+From 295af5eca06f1e92b57ba9348d7fb04fab834cfb Mon Sep 17 00:00:00 2001
+From: Laine Stump <laine@laine.org>
+Date: Thu, 4 Aug 2011 10:02:50 -0400
+Subject: [PATCH 1/2] eliminate potential use of uninitialized index/pointer
+ in add_bridge_info
+
+This was detected by Coverity and reported in:
+
+https://bugzilla.redhat.com/show_bug.cgi?id=728184
+
+This patch is a direct cherry-pick of upstream commit
+af17ee0ce5d0fbfb5afa5cfc4e6c5f3fd14d8c9a.
+
+Commit d32a46 moved the bit of code that adds the <bridge> element to
+bridge interfaces to the top of the function so that it is always
+done, even if there are no physical devices attached to the bridge
+(because <bridge> is a required element of the grammar). What wasn't
+noticed is that the ERR_NOMEM macro could goto error, and in this case
+nphys and phys_names would be uninitialized.
+
+Fortunately this would only happen on a failure to allocate memory.
+---
+ src/dutil_linux.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/dutil_linux.c b/src/dutil_linux.c
+index 1a3a86e..75492ba 100644
+--- a/src/dutil_linux.c
++++ b/src/dutil_linux.c
+@@ -1018,8 +1018,8 @@ error:
+ static void add_bridge_info(struct netcf *ncf,
+                             const char *ifname, int ifindex ATTRIBUTE_UNUSED,
+                             xmlDocPtr doc, xmlNodePtr root) {
+-    char **phys_names;
+-    int  nphys, ii;
++    char **phys_names = NULL;
++    int  nphys = 0, ii;
+     xmlNodePtr bridge_node = NULL, interface_node = NULL;
+ 
+     /* The <bridge> element is required by the grammar, so always add
+-- 
+1.7.4.4
+
